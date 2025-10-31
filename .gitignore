@@ -1,0 +1,71 @@
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+*.env
+*.venv
+
+# Byte-compiled / optimized / DLL files
+*.so
+*.pyd
+*.dll
+*.dylib
+
+# ==========================
+# Logs and runtime files
+# ==========================
+*.log
+logs/
+debug.log
+
+# ==========================
+# Project-specific files
+# ==========================
+# Debank monitor / Crypto Balance Monitor data
+data/
+results/
+output/
+tmp/
+cache/
+
+# JSON results
+data/*.json
+*.json
+
+# HTML reports (auto-generated)
+results.html
+*.html
+
+# ==========================
+# OS & Editor junk
+# ==========================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ==========================
+# Sensitive data
+# ==========================
+# Files containing addresses or proxies
+addresses.txt
+proxies.txt
+config.json
+secret*.json
+
+# ==========================
+# Playwright specific
+# ==========================
+playwright/.cache/
+playwright-report/
+test-results/
+trace.zip
