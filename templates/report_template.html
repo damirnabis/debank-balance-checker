@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Wallets Explorer</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  margin: 0; padding: 0;
+  display: flex; flex-direction: column;
+  height: 100vh; overflow: hidden;
+}
+#topbar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid #ccc;
+  background: #fafafa;
+  padding: 6px 10px;
+  display: flex; align-items: center; justify-content: flex-end;
+}
+.main { flex: 1; display: flex; overflow: hidden; }
+.column {
+  overflow-y: auto;
+  border-right: 1px solid #ddd;
+  display: flex; flex-direction: column;
+  min-width: 150px; padding: 0 5px;
+}
+.divider { width: 4px; cursor: col-resize; background: #eee; transition: background 0.15s; }
+.divider:hover { background: #ccc; }
+#wallets { width: 25%; max-width: 600px; }
+#chains { width: 35%; max-width: 700px; }
+#tokens { flex: 1; border-right: none; display:flex; flex-direction:column; }
+.item {
+  padding: 6px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid #eee;
+  display: flex; align-items: center; gap: 6px;
+  transition: background 0.12s;
+}
+.item:hover { background: #f1fdf1; }
+.selected { background: #d9f0d9 !important; font-weight: bold; }
+.money { color: green; margin-left: auto; text-align: right; flex: 1; font-size: 16px; }
+h2, .search-box, .network-filter, .tabs {
+  position: sticky; top: 0;
+  background: #fafafa;
+  z-index: 3;
+}
+h2 {
+  padding: 5px 0; margin: 0;
+  border-bottom: 1px solid #ccc;
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 16px; font-weight: 600;
+}
+.token-subheader {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 5px 0;
+  border-bottom: 1px solid #ccc;
+  background: #fafafa;
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+}
+.token-subheader img {
+  width: 16px; height: 16px; border-radius: 50%;
+  vertical-align: middle;
+}
+.search-box, select.network-filter {
+  margin: 5px; padding: 5px;
+  border: 1px solid #ccc; border-radius: 4px;
+  width: calc(100% - 20px);
+}
+.checkbox-small { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.tabs {
+  display: flex; align-items: center;
+  border-bottom: 1px solid #ccc;
+  top: 0; background: #fafafa; z-index: 4;
+  padding: 4px 6px;
+}
+.tab {
+  padding: 6px 14px;
+  cursor: pointer;
+  border-top-left-radius: 6px; border-top-right-radius: 6px;
+  background: #f2f2f2;
+  margin-right: 4px;
+  font-size: 16px; font-weight: 600;
+  transition: all 0.2s;
+}
+.tab:hover { background: #e3f5e3; }
+.tab.active { background: #d9f0d9; font-weight: bold; }
+#tabs-summary {
+  margin-left: auto;
+  font-weight: bold;
+  font-size: 16px;
+  color: #2d7a2d;
+  padding-right: 10px;
+}
+.chain-logo, .token-logo, .protocol-logo {
+  width: 16px; height: 16px; border-radius: 50%;
+}
+.no-wallets {
+  text-align: center;
+  color: #888;
+  margin-top: 20px;
+  font-style: italic;
+}
+.token-list { padding: 6px; display:flex; flex-direction:column; gap:6px; }
+.wallet-address {
+  cursor: pointer;
+  user-select: text;
+  position: relative;
+}
+.wallet-address:hover {
+  text-decoration: underline;
+}
+.copy-hint {
+  font-size: 12px;
+  color: #4caf50;
+  margin-left: 4px;
+  opacity: 0.9;
+  transition: opacity 0.4s;
+}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <label class="checkbox-small">
+    <input type="checkbox" id="hideSmallGlobal"> Hide balances < $1
+  </label>
+</div>
+<div class="main">
+  <div id="wallets" class="column"></div>
+  <div id="div1" class="divider"></div>
+  <div id="chains" class="column"></div>
+  <div id="div2" class="divider"></div>
+  <div id="tokens" class="column"></div>
+</div>
+<script>
+    const data = {{DATA_JSON}};
+    const walletOrder = {{WALLET_ORDER}};
+    let totalBalance = {{TOTAL_BALANCE}};
+let selectedWallet = localStorage.getItem("selectedWallet") || null;
+let selectedChain = localStorage.getItem("selectedChain") || null;
+let selectedNetworkFilter = localStorage.getItem("selectedNetworkFilter") || "all";
+let hideSmallBalances = localStorage.getItem("hideSmallBalances") === "true";
+let activeTab = localStorage.getItem("activeTab") || "tabTokens";
+let tokenFilterValue = localStorage.getItem("tokenFilterValue") || "";
+let walletFilterValue = localStorage.getItem("walletFilterValue") || "";
+
+// Инициализация состояния UI
+document.getElementById("hideSmallGlobal").checked = hideSmallBalances;
+document.getElementById("hideSmallGlobal").addEventListener("change", function() {
+  hideSmallBalances = this.checked;
+  localStorage.setItem("hideSmallBalances", hideSmallBalances);
+  if (selectedWallet) { selectWallet(selectedWallet); if (selectedChain) renderTabs(); }
+});
+
+function initDividers() {
+  const pairs = [
+    { div: document.getElementById("div1"), left: document.getElementById("wallets"), key: "width_wallets" },
+    { div: document.getElementById("div2"), left: document.getElementById("chains"), key: "width_chains" }
+  ];
+  pairs.forEach(({ div, left, key }) => {
+    const saved = localStorage.getItem(key);
+    if (saved) left.style.width = saved;
+    let startX = 0, startW = 0;
+    function onMove(e) {
+      const dx = e.clientX - startX;
+      const newW = startW + dx;
+      if (newW > 120) left.style.width = newW + "px";
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      localStorage.setItem(key, left.style.width);
+    }
+    div.addEventListener("mousedown", e => {
+      startX = e.clientX; startW = left.offsetWidth;
+      document.body.style.cursor = "col-resize";
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      e.preventDefault();
+    });
+  });
+}
+
+// Рендер списка кошельков (использует walletOrder, отсортированный в Python)
+function renderWallets(filter = "") {
+  const el = document.getElementById("wallets");
+
+  // 🔹 Сохраняем текущий фильтр
+  if (!filter && walletFilterValue) filter = walletFilterValue;
+  walletFilterValue = filter;
+  localStorage.setItem("walletFilterValue", walletFilterValue);
+
+  const q = (tokenFilterValue || "").toLowerCase();
+  const networkFilter =
+    selectedNetworkFilter && selectedNetworkFilter !== "all"
+      ? selectedNetworkFilter
+      : null;
+
+  // 🔹 Фильтрация списка кошельков
+  let walletsList = walletOrder
+    .map((a) => data[a])
+    .filter((w) =>
+      (w.address || "").toLowerCase().includes(filter.toLowerCase())
+    )
+    // 🔹 Фильтр по сети
+    .filter((w) => {
+      if (!networkFilter) return true;
+      const chains = Object.keys(w.chains || {});
+      return chains.includes(networkFilter);
+    })
+    // 🔹 Фильтр по токену
+    .filter((w) => {
+      if (!q) return true;
+      return Object.values(w.chains || {}).some((chain) => {
+        const tokens = Object.entries(chain.tokens || {});
+        const defi = Object.values(chain.defi || {});
+
+        const matchToken = tokens.some(([t, tdata]) => {
+          const keyL = (t || "").toLowerCase();
+          const sym = (tdata.symbol || "").toLowerCase();
+          const tick = (tdata.ticker || "").toLowerCase();
+          return keyL.includes(q) || sym.includes(q) || tick.includes(q);
+        });
+
+        const matchDefi = defi.some((p) =>
+          (p.positions || []).some((pos) => {
+            const tick = (pos.ticker || pos.symbol || "").toLowerCase();
+            return tick.includes(q);
+          })
+        );
+
+        return matchToken || matchDefi;
+      });
+    });
+
+  // 💰 Пересчёт totalBalance по отфильтрованным кошелькам
+  let filteredTotal = 0;
+  walletsList.forEach((w) => {
+    const walletChains = Object.entries(w.chains || {});
+    walletChains.forEach(([chain]) => {
+      if (networkFilter && chain !== networkFilter) return;
+      const sumTokens = calcTokensSumFiltered(w.address, chain, q);
+      const sumProtocols = calcProtocolsSumFiltered(w.address, chain, q);
+      filteredTotal += sumTokens + sumProtocols;
+    });
+  });
+
+  el.innerHTML = `<h2>Wallets <span class='money'>$${filteredTotal.toFixed(
+    2
+  )}</span></h2>
+  <input id='walletFilter' class='search-box' type='text' placeholder='Search wallet...' value='${walletFilterValue}'>`;
+
+  const input = el.querySelector("#walletFilter");
+  input.addEventListener("input", (e) => {
+    walletFilterValue = e.target.value;
+    localStorage.setItem("walletFilterValue", walletFilterValue);
+    renderWallets(walletFilterValue);
+  });
+
+  if (walletsList.length === 0) {
+    const emptyMsg = document.createElement("div");
+    emptyMsg.className = "no-wallets";
+    emptyMsg.textContent = "No wallets found";
+    el.appendChild(emptyMsg);
+    return;
+  }
+
+  walletsList.forEach((w) => {
+    const div = document.createElement("div");
+    div.className = "item";
+    if (w.address === selectedWallet) div.classList.add("selected");
+
+    // 💵 сумма по кошельку
+    let walletSum = 0;
+    Object.entries(w.chains || {}).forEach(([chain]) => {
+      if (networkFilter && chain !== networkFilter) return;
+      walletSum +=
+        calcTokensSumFiltered(w.address, chain, q) +
+        calcProtocolsSumFiltered(w.address, chain, q);
+    });
+
+    if (hideSmallBalances && walletSum < 1) return;
+
+    // 💎 структура кошелька
+    div.innerHTML = `
+      <span class="wallet-address">${w.address}</span>
+      <span class='money'>$${walletSum.toFixed(2)}</span>
+    `;
+
+    const addrEl = div.querySelector(".wallet-address");
+
+    // 🖱️ Одинарный клик — выбор кошелька
+    div.addEventListener("click", () => {
+      const prevChain = selectedChain;
+      selectedWallet = w.address;
+      localStorage.setItem("selectedWallet", selectedWallet);
+      const walletChains = Object.keys(w.chains || {});
+
+      if (selectedNetworkFilter && selectedNetworkFilter !== "all") {
+        if (walletChains.includes(selectedNetworkFilter)) {
+          selectedChain = selectedNetworkFilter;
+          localStorage.setItem("selectedChain", selectedChain);
+        } else {
+          selectedChain = null;
+          localStorage.removeItem("selectedChain");
+        }
+      } else if (prevChain && walletChains.includes(prevChain)) {
+        selectedChain = prevChain;
+        localStorage.setItem("selectedChain", selectedChain);
+      } else {
+        selectedChain = walletChains.length > 0 ? walletChains[0] : null;
+        if (selectedChain) localStorage.setItem("selectedChain", selectedChain);
+      }
+
+      renderWallets(filter);
+      selectWallet(selectedWallet);
+
+      if (selectedChain) {
+        if (activeTab === "tabProtocols") {
+          renderProtocols(selectedWallet, selectedChain);
+          setActiveTab("tabProtocols");
+        } else {
+          renderTokens(selectedWallet, selectedChain);
+          setActiveTab("tabTokens");
+        }
+      }
+
+      applyTokenFilterImmediately();
+    });
+
+    // ✨ Двойной клик — копирование адреса
+    addrEl.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      if (navigator.clipboard) {
+        navigator.clipboard
+          .writeText(w.address)
+          .then(() => {
+            const hint = document.createElement("span");
+            hint.textContent = " ✅";
+            hint.className = "copy-hint";
+            addrEl.appendChild(hint);
+            setTimeout(() => hint.remove(), 1000);
+          })
+          .catch((err) => console.error("Clipboard copy failed:", err));
+      }
+    });
+
+    el.appendChild(div);
+  });
+}
+
+// Построение списка сетей для выбранного кошелька (учитывает фильтр токенов)
+function selectWallet(address) {
+  const w = data[address];
+  const el = document.getElementById("chains");
+  el.innerHTML = "";
+
+  if (!w) return;
+
+  const walletChains = Object.entries(w.chains || {});
+  const q = (tokenFilterValue || "").toLowerCase();
+
+  // 🔹 Фильтрация сетей с учётом фильтра по сети и токену
+  let filteredChains = walletChains;
+
+  // 🟢 если выбран фильтр по сети — показываем только её
+  if (selectedNetworkFilter && selectedNetworkFilter !== "all") {
+    filteredChains = walletChains.filter(([chain]) => chain === selectedNetworkFilter);
+  }
+  // 🟢 иначе применяем токенный фильтр (если есть)
+  else if (tokenFilterValue) {
+    const q = (tokenFilterValue || "").toLowerCase();
+    filteredChains = walletChains.filter(([chain, cdata]) => {
+      const tokens = Object.entries(cdata.tokens || {});
+      const defi = Object.values(cdata.defi || {});
+      const matchToken = tokens.some(([t, tdata]) => {
+        if (hideSmallBalances && (tdata.usd || 0) < 1) return false;
+        const keyL = (t || "").toLowerCase();
+        const sym = (tdata.symbol || "").toLowerCase();
+        const tick = (tdata.ticker || "").toLowerCase();
+        return keyL.includes(q) || sym.includes(q) || tick.includes(q);
+      });
+      const matchDefi = defi.some(p => {
+        if (hideSmallBalances && (p.total_usd || 0) < 1) return false;
+        return (p.positions || []).some(pos => {
+          const tick = (pos.ticker || pos.symbol || "").toLowerCase();
+          return tick.includes(q);
+        });
+      });
+      return matchToken || matchDefi;
+    });
+  }
+
+  // 🔹 Пересчёт totalSum по фильтру
+  let totalSum = 0;
+  filteredChains.forEach(([_, cdata]) => {
+    const sumTokens = calcTokensSumFiltered(address, cdata.name || _, q);
+    const sumProtocols = calcProtocolsSumFiltered(address, cdata.name || _, q);
+    totalSum += sumTokens + sumProtocols;
+  });
+
+  el.innerHTML = `<h2>Chains <span class='money'>$${totalSum.toFixed(2)}</span></h2>
+    <select id='networkFilter' class='network-filter'>
+      <option value='all'>All chains</option>
+      ${filteredChains
+        .map(([c, _]) => `<option value='${c}' ${c === selectedNetworkFilter ? "selected" : ""}>${c}</option>`)
+        .join("")}
+    </select>`;
+
+  const netSel = el.querySelector("#networkFilter");
+  netSel.addEventListener("change", () => {
+    selectedNetworkFilter = netSel.value;
+    localStorage.setItem("selectedNetworkFilter", selectedNetworkFilter);
+
+    if (selectedNetworkFilter !== "all") {
+      // ✅ Показываем только выбранную сеть
+      selectedChain = selectedNetworkFilter;
+      localStorage.setItem("selectedChain", selectedChain);
+
+      // 🔹 Список сетей теперь содержит только выбранную
+      const w = data[selectedWallet];
+      const cdata = w?.chains?.[selectedNetworkFilter];
+      if (cdata) {
+        const el = document.getElementById("chains");
+        el.innerHTML = `
+          <h2>Chains <span class='money'>$${(
+            calcTokensSumFiltered(selectedWallet, selectedChain, tokenFilterValue) +
+            calcProtocolsSumFiltered(selectedWallet, selectedChain, tokenFilterValue)
+          ).toFixed(2)}</span></h2>
+          <select id='networkFilter' class='network-filter'>
+            <option value='${selectedNetworkFilter}' selected>${selectedNetworkFilter}</option>
+            <option value='all'>All chains</option>
+          </select>
+        `;
+
+        // повторное подключение обработчика — чтобы можно было вернуться к “All chains”
+        el.querySelector("#networkFilter").addEventListener("change", e => {
+          selectedNetworkFilter = e.target.value;
+          localStorage.setItem("selectedNetworkFilter", selectedNetworkFilter);
+          selectWallet(selectedWallet);
+          renderWallets();
+          applyTokenFilterImmediately();
+        });
+
+        // 🔹 отображаем только выбранную сеть
+        const div = document.createElement("div");
+        div.className = "item selected";
+        div.innerHTML = `
+          <img class='chain-logo' src='${cdata.logo_url || ""}'>
+          ${selectedNetworkFilter}
+          <span class='money'>$${(
+            calcTokensSumFiltered(selectedWallet, selectedChain, tokenFilterValue) +
+            calcProtocolsSumFiltered(selectedWallet, selectedChain, tokenFilterValue)
+          ).toFixed(2)}</span>
+        `;
+        el.appendChild(div);
+      }
+    } else {
+      // 🔙 Вернулись к “All chains” — перерисовать список полностью
+      selectWallet(selectedWallet);
+    }
+
+    // 🔄 Обновляем кошельки и вкладки
+    renderWallets();
+    applyTokenFilterImmediately();
+  });
+
+  // 🔹 Перечисляем сети
+  filteredChains.forEach(([chain, cdata]) => {
+    const sumTokens = calcTokensSumFiltered(address, chain, q);
+    const sumProtocols = calcProtocolsSumFiltered(address, chain, q);
+    const chainSum = sumTokens + sumProtocols;
+
+    if (hideSmallBalances && chainSum < 1) return;
+
+    const div = document.createElement("div");
+    div.className = "item";
+    if (chain === selectedChain) div.classList.add("selected");
+    div.innerHTML = `
+      <img class='chain-logo' src='${cdata.logo_url || ""}'>
+      ${chain}
+      <span class='money'>$${chainSum.toFixed(2)}</span>
+    `;
+
+    div.addEventListener("click", () => {
+      document.querySelectorAll("#chains .item").forEach(i => i.classList.remove("selected"));
+      div.classList.add("selected");
+      selectedChain = chain;
+      localStorage.setItem("selectedChain", selectedChain);
+
+      if (activeTab === "tabProtocols") {
+        renderProtocols(selectedWallet, selectedChain);
+        setActiveTab("tabProtocols");
+      } else {
+        renderTokens(selectedWallet, selectedChain);
+        setActiveTab("tabTokens");
+      }
+    });
+
+    el.appendChild(div);
+  });
+}
+
+// Вкладки располагаются в колонке tokens (над списком токенов/протоколов)
+function renderTabs() {
+  const tokensColumn = document.getElementById("tokens");
+  let tabsEl = tokensColumn.querySelector(".tabs");
+  if (!tabsEl) {
+    tabsEl = document.createElement("div");
+    tabsEl.className = "tabs";
+    tabsEl.innerHTML = `
+      <div id='tabTokens' class='tab'>Tokens (0)</div>
+      <div id='tabProtocols' class='tab'>Protocols (0)</div>
+      <div id='tabs-summary'>Total: $0.00</div>
+    `;
+
+    tabsEl.querySelector("#tabTokens").addEventListener("click", () => {
+      setActiveTab("tabTokens");
+      renderTokens();
+    });
+    tabsEl.querySelector("#tabProtocols").addEventListener("click", () => {
+      setActiveTab("tabProtocols");
+      renderProtocols();
+    });
+
+    tokensColumn.prepend(tabsEl);
+  }
+
+  // Контейнер контента вкладок
+  let contentEl = document.getElementById("tabContent");
+  if (!contentEl) {
+    contentEl = document.createElement("div");
+    contentEl.id = "tabContent";
+    contentEl.style.flex = "1";
+    tokensColumn.appendChild(contentEl);
+  }
+
+  // ⚙️ Рендерим только активную вкладку
+  if (activeTab === "tabProtocols") {
+    setActiveTab("tabProtocols");
+    renderProtocols();
+  } else {
+    setActiveTab("tabTokens");
+    renderTokens();
+  }
+}
+
+function setActiveTab(id) {
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  const el = document.getElementById(id);
+  if (el) el.classList.add("active");
+  activeTab = id;
+  localStorage.setItem("activeTab", id);
+}
+
+function updateTotalDisplay(sumTokens, sumProtocols) {
+  const total = (sumTokens + sumProtocols).toFixed(2);
+  const el = document.getElementById("tabs-summary");
+  if (el) el.textContent = `Total: $${total}`;
+}
+
+// Рендер токенов для выбранного кошелька и сети
+function renderTokens(address, chain) {
+  address = address || selectedWallet;
+  chain = chain || selectedChain;
+  const el = document.getElementById("tabContent");
+  el.innerHTML = "";
+
+  if (!address || !chain) {
+    el.innerHTML = "<div class='no-wallets'>Select wallet and chain</div>";
+    const tabT = document.getElementById("tabTokens");
+    if (tabT) tabT.textContent = "Tokens (0)";
+    updateTotalDisplay(0, 0);
+    return;
+  }
+
+  const cdata = (data[address].chains || {})[chain] || { tokens: {}, defi: {}, total: 0 };
+  const tokens = Object.entries(cdata.tokens || {}).sort(
+    (a, b) => (b[1].usd || 0) - (a[1].usd || 0)
+  );
+
+  const header = document.createElement("div");
+  header.className = "token-subheader";
+  const logo = cdata.logo_url ? `<img src='${cdata.logo_url}'>` : "";
+  header.innerHTML = `<div>${logo} ${chain} tokens</div><span class='money'>$0.00</span>`;
+  el.appendChild(header);
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "search-box";
+  input.placeholder = "Filter tokens...";
+  input.value = tokenFilterValue;
+  el.appendChild(input);
+
+  const list = document.createElement("div");
+  list.className = "token-list";
+  el.appendChild(list);
+
+  function update() {
+    list.innerHTML = "";
+    const q = (input.value || "").toLowerCase();
+    let visible = 0;
+    let sum = 0;
+
+    tokens.forEach(([token, tdata]) => {
+      if (hideSmallBalances && (tdata.usd || 0) < 1) return;
+      if (!q || token.toLowerCase().includes(q)) {
+        const div = document.createElement("div");
+        div.className = "item";
+        div.innerHTML = `<img class='token-logo' src='${tdata.logo_url||""}'> ${tdata.amount} ${token} <span class='money'>$${(tdata.usd||0).toFixed(2)}</span>`;
+        list.appendChild(div);
+        visible++;
+        sum += tdata.usd || 0;
+      }
+    });
+
+    const tabT = document.getElementById("tabTokens");
+    if (tabT) tabT.textContent = `Tokens (${visible})`;
+    header.querySelector(".money").textContent = `$${sum.toFixed(2)}`;
+    updateTotalDisplay(sum, calcProtocolsSumFiltered(address, chain, q));
+
+    // 🔄 обновляем заголовок второй вкладки (Protocols)
+    const sumProtocols = calcProtocolsSumFiltered(address, chain, q);
+    const protocolsCount = countFilteredProtocols(address, chain, q);
+    document.getElementById("tabProtocols").textContent = `Protocols (${protocolsCount})`;
+
+    tokenFilterValue = input.value;
+    localStorage.setItem("tokenFilterValue", tokenFilterValue);
+  }
+
+  input.addEventListener("input", e => {
+    tokenFilterValue = e.target.value;
+    localStorage.setItem("tokenFilterValue", tokenFilterValue);
+    update();
+
+    if (tokenFilterValue.trim() !== "") {
+      // При активном фильтре — обновляем сети
+      selectWallet(address);
+      renderWallets();
+    } else {
+      // 🔄 При очистке фильтра — возвращаем полный список сетей
+      tokenFilterValue = "";
+      localStorage.removeItem("tokenFilterValue");
+      selectWallet(address);
+      renderWallets();
+    }
+  });
+
+  update();
+
+  let tokensCache = document.getElementById("tokensContent");
+  if (!tokensCache) {
+    tokensCache = document.createElement("div");
+    tokensCache.id = "tokensContent";
+    tokensCache.style.display = "none";
+    document.body.appendChild(tokensCache);
+  }
+  tokensCache.innerHTML = el.innerHTML;
+}
+
+// Рендер протоколов для выбранного кошелька и сети
+function renderProtocols(address, chain) {
+  address = address || selectedWallet;
+  chain = chain || selectedChain;
+  const el = document.getElementById("tabContent");
+  el.innerHTML = "";
+
+  if (!address || !chain) {
+    el.innerHTML = "<div class='no-wallets'>Select wallet and chain</div>";
+    const tabP = document.getElementById("tabProtocols");
+    if (tabP) tabP.textContent = "Protocols (0)";
+    updateTotalDisplay(0, 0);
+    return;
+  }
+
+  const cdata = (data[address].chains || {})[chain] || { tokens: {}, defi: {}, total: 0 };
+  const protocols = Object.entries(cdata.defi || {}).sort(
+    (a, b) => (b[1].total_usd || 0) - (a[1].total_usd || 0)
+  );
+
+  const header = document.createElement("div");
+  header.className = "token-subheader";
+  const logo = cdata.logo_url ? `<img src='${cdata.logo_url}'>` : "";
+  header.innerHTML = `<div>${logo} ${chain} protocols</div><span class='money'>$0.00</span>`;
+  el.appendChild(header);
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "search-box";
+  input.placeholder = "Filter tokens...";
+  input.value = tokenFilterValue;
+  el.appendChild(input);
+
+  const list = document.createElement("div");
+  list.className = "token-list";
+  el.appendChild(list);
+
+  function update() {
+    list.innerHTML = "";
+    const q = (input.value || "").toLowerCase();
+    let visible = 0;
+    let sum = 0;
+
+    protocols.forEach(([name, pdata]) => {
+      if (hideSmallBalances && (pdata.total_usd || 0) < 1) return;
+
+      const filteredPositions = (pdata.positions || []).filter(pos => {
+        const ticker = (pos.ticker || pos.symbol || "").toLowerCase();
+        return !q || ticker.includes(q);
+      });
+
+      if (filteredPositions.length === 0) return;
+
+      // 💰 Считаем сумму только по отфильтрованным позициям
+      let localSum = 0;
+      filteredPositions.forEach(pos => {
+        const usd = pos.usd || pos.usd_value || 0;
+        localSum += usd || 0;
+      });
+
+      const div = document.createElement("div");
+      div.className = "item";
+      div.style.flexDirection = "column";
+      div.style.alignItems = "stretch";
+
+      // 🔄 Заголовок протокола с суммой по фильтру
+      const headerRow = document.createElement("div");
+      headerRow.style.display = "flex";
+      headerRow.style.alignItems = "center";
+      headerRow.innerHTML = `
+        <img class='protocol-logo' src='${pdata.logo_url || ""}'>
+        <span style="flex:1">${name}</span>
+        <span class='money'>$${localSum.toFixed(2)}</span>
+      `;
+
+      // 📊 Детали позиций
+      const details = document.createElement("div");
+      details.style.display = "block";
+      details.style.paddingLeft = "24px";
+      details.style.borderTop = "1px dashed #ccc";
+      details.style.marginTop = "4px";
+      details.style.fontSize = "14px";
+      details.style.fontStyle = "italic";
+
+      filteredPositions.forEach(pos => {
+        const ticker = pos.ticker || pos.symbol || "";
+        const amount = pos.amount || pos.balance || 0;
+        const usd = pos.usd || pos.usd_value || 0;
+
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.justifyContent = "space-between";
+        row.style.padding = "2px 0";
+        row.innerHTML = `<span>${amount} ${ticker}</span><span class="money" style="font-size:14px;">$${(usd || 0).toFixed(2)}</span>`;
+        details.appendChild(row);
+      });
+
+      div.appendChild(headerRow);
+      div.appendChild(details);
+      list.appendChild(div);
+
+      visible++;
+      sum += localSum;
+    });
+
+    // 🔢 Обновляем счётчики и итоговую сумму
+    const tabP = document.getElementById("tabProtocols");
+    if (tabP) tabP.textContent = `Protocols (${visible})`;
+    header.querySelector(".money").textContent = `$${sum.toFixed(2)}`;
+
+    // ✅ Итоговая сумма Total
+    const sumTokens = calcTokensSumFiltered(address, chain, q);
+    updateTotalDisplay(sumTokens, sum);
+
+    // 🔄 обновляем вкладку Tokens
+    const tokensCount = countFilteredTokens(address, chain, q);
+    document.getElementById("tabTokens").textContent = `Tokens (${tokensCount})`;
+
+    tokenFilterValue = input.value;
+    localStorage.setItem("tokenFilterValue", tokenFilterValue);
+  }
+
+  input.addEventListener("input", e => {
+    tokenFilterValue = e.target.value;
+    localStorage.setItem("tokenFilterValue", tokenFilterValue);
+    update();
+
+    if (tokenFilterValue.trim() !== "") {
+      selectWallet(address); // фильтр активен
+      renderWallets();
+    } else {
+      // 🔄 фильтр очищен — вернуть все сети
+      tokenFilterValue = "";
+      localStorage.removeItem("tokenFilterValue");
+      selectWallet(address);
+      renderWallets();
+    }
+  });
+
+  update();
+
+  // 🟢 при первичном открытии вкладки сразу считаем фильтрованный Total
+  const q = (input.value || "").toLowerCase();
+  const sumTokens = calcTokensSumFiltered(address, chain, q);
+  updateTotalDisplay(sumTokens, sum);
+
+  // Кешируем состояние вкладки (для переключений)
+  let protocolsCache = document.getElementById("protocolsContent");
+  if (!protocolsCache) {
+    protocolsCache = document.createElement("div");
+    protocolsCache.id = "protocolsContent";
+    protocolsCache.style.display = "none";
+    document.body.appendChild(protocolsCache);
+  }
+  protocolsCache.innerHTML = el.innerHTML;
+}
+
+// 🟢 Мгновенное применение фильтра после смены сети или кошелька
+function applyTokenFilterImmediately() {
+  if (!selectedWallet || !selectedChain) return;
+
+  if (activeTab === "tabProtocols") {
+    renderProtocols(selectedWallet, selectedChain);
+    setActiveTab("tabProtocols");
+  } else {
+    renderTokens(selectedWallet, selectedChain);
+    setActiveTab("tabTokens");
+  }
+}
+
+// Универсальная функция обновления вкладок при смене кошелька/сети/фильтра
+function refreshTabs() {
+  if (!selectedWallet || !selectedChain) return;
+  // Обновляем обе вкладки
+  renderTokens(selectedWallet, selectedChain);
+  renderProtocols(selectedWallet, selectedChain);
+  // Отрисовываем активную вкладку актуальными данными
+  if (activeTab === "tabProtocols") {
+    setActiveTab("tabProtocols");
+    renderProtocols(selectedWallet, selectedChain);
+  } else {
+    setActiveTab("tabTokens");
+    renderTokens(selectedWallet, selectedChain);
+  }
+}
+
+// Хелперы для сумм с учётом фильтра
+function calcTokensSumFiltered(address, chain, filter) {
+  const cdata = (data[address].chains || {})[chain] || { tokens: {} };
+  const q = (filter || "").toLowerCase();
+
+  return Object.entries(cdata.tokens || {})
+    .filter(([key, t]) => {
+      // скрываем мелкие балансы, если опция включена
+      if (hideSmallBalances && ((t.usd || 0) < 1)) return false;
+      return true;
+    })
+    .filter(([key, t]) => {
+      if (!q) return true;
+      const keyL = (key || "").toLowerCase();
+      const sym = (t.symbol || "").toLowerCase();
+      const tick = (t.ticker || "").toLowerCase();
+      return keyL.includes(q) || sym.includes(q) || tick.includes(q);
+    })
+    .reduce((acc, [_, t]) => acc + (t.usd || 0), 0);
+}
+
+function calcProtocolsSumFiltered(address, chain, filter) {
+  const cdata = (data[address].chains || {})[chain] || { defi: {} };
+  const q = (filter || "").toLowerCase();
+  let total = 0;
+
+  Object.values(cdata.defi || {}).forEach(p => {
+    if (hideSmallBalances && (p.total_usd || 0) < 1) return;
+    const positions = (p.positions || []).filter(pos => {
+      const ticker = (pos.ticker || pos.symbol || "").toLowerCase();
+      return !q || ticker.includes(q);
+    });
+    positions.forEach(pos => {
+      total += pos.usd || pos.usd_value || 0;
+    });
+  });
+
+  return total;
+}
+
+function countFilteredTokens(address, chain, filter) {
+  const cdata = (data[address].chains || {})[chain] || { tokens: {} };
+  return Object.entries(cdata.tokens || {})
+    .filter(([name, t]) => !hideSmallBalances || (t.usd || 0) >= 1)
+    .filter(([name, t]) => {
+      const sym = (t.symbol || name || "").toLowerCase();
+      return !filter || sym.includes(filter.toLowerCase());
+    }).length;
+}
+
+function countFilteredProtocols(address, chain, filter) {
+  const cdata = (data[address].chains || {})[chain] || { defi: {} };
+  return Object.values(cdata.defi || {})
+    .filter(p => !hideSmallBalances || (p.total_usd || 0) >= 1)
+    .filter(p => {
+      const positions = (p.positions || []).filter(pos => {
+        const ticker = (pos.ticker || pos.symbol || "").toLowerCase();
+        return !filter || ticker.includes(filter.toLowerCase());
+      });
+      return positions.length > 0;
+    }).length;
+}
+
+// Инициализация UI
+initDividers();
+renderWallets();
+if (!selectedWallet && walletOrder.length>0) {
+  selectedWallet = walletOrder[0];
+  localStorage.setItem("selectedWallet", selectedWallet);
+}
+
+if (selectedWallet) {
+  selectWallet(selectedWallet);
+
+  if (!selectedChain) {
+    const w = data[selectedWallet] || {};
+    const keys = w.chains ? Object.keys(w.chains) : [];
+    selectedChain = keys.length > 0 ? keys[0] : null;
+    if (selectedChain) localStorage.setItem("selectedChain", selectedChain);
+  }
+
+  // 🟢 Полное восстановление вкладок и данных при загрузке страницы
+  renderTabs();
+
+  // 🟢 Восстанавливаем контент активной вкладки
+  const tabContent = document.getElementById("tabContent");
+  if (activeTab === "tabProtocols") {
+    setActiveTab("tabProtocols");
+    tabContent.innerHTML = document.getElementById("protocolsContent")?.innerHTML || "";
+  } else {
+    setActiveTab("tabTokens");
+    tabContent.innerHTML = document.getElementById("tokensContent")?.innerHTML || "";
+  }
+
+  // 🟢 Применяем фильтр
+  applyTokenFilterImmediately();
+}
+window.addEventListener("load", () => {
+    fetch("http://127.0.0.1:5000/regen", { method: "POST" })
+      .catch(() => console.log("⚠️ Generate HTML skipped — no server endpoint."));
+});
+</script>
+</body>
+</html>    

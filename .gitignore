@@ -30,7 +30,6 @@ debug.log
 # Project-specific files
 # ==========================
 # Debank monitor / Crypto Balance Monitor data
-data/
 results/
 output/
 tmp/
@@ -42,7 +41,6 @@ data/*.json
 
 # HTML reports (auto-generated)
 results.html
-*.html
 
 # ==========================
 # OS & Editor junk
