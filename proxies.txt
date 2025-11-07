@@ -1,3 +1,0 @@
-username:password@address1:port1
-username:password@address2:port2
-...
