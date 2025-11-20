@@ -1,17 +1,21 @@
+<!-- Language Switcher -->
+[![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md)
+[![Русский](https://img.shields.io/badge/язык-Русский-red.svg)](README.ru.md)
+
 # 💰 Debank balance checker
 
-Скрипт автоматически собирает данные о кошельках из Debank и выводит результат в HTML-страницу.
+The script automatically collects wallet data from Debank and outputs the results to an HTML page.
 
-Поддерживает:
-- Асинхронный парсинг в несколько потоков 🧩
-- Работа через прокси 🌍
-- Автоматическую генерацию HTML-страницы с данными 📊
-- Автообновление данных каждые N минут 🔁
+Supports:
+- Asynchronous multi-threaded parsing 🧩
+- Proxy support 🌍
+- Automatic HTML page generation with collected data 📊
+- Auto-refresh of data every N minutes 🔁
 
 
-## 🛠 Установка
+## 🛠 Installation
 
-1. Клонируй или скопируй проект
+1. Clone or download the project:
 
 ```bash
 git clone https://github.com/damirnabis/debank-balance-checker.git
@@ -20,19 +24,19 @@ git clone https://github.com/damirnabis/debank-balance-checker.git
 cd debank-balance-checker
 ```
 
-2. Создай и активируй виртуальное окружение (рекомендуется)
+2. Create and activate a virtual environment (recommended):
 
 ```bash
 python -m venv venv
 ```
 ```bash
-venv\Scripts\activate    # для Windows
+venv\Scripts\activate    # for Windows
 ```
 ```bash          
-source venv/bin/activate # для macOS/Linux
+source venv/bin/activate # for macOS/Linux
 ```
 
-3. Установи зависимости
+3. Install the dependencies:
 
 ```bash
 pip install -r requirements.txt
@@ -42,42 +46,42 @@ playwright install
 ```
 
 
-## ⚙️ Настройки
+## ⚙️ Configuration
 
-1. Заполни файл data\addresses.txt публичными адресами EVM кошельков.
+1. Fill the file data/addresses.txt with wallet public addresses.
 
-2. Опционально: для запуска скрипта в несколько потоков заполни файл data\proxies.txt прокси.
+2. Optional: to run the script in multiple threads, fill data/proxies.txt with proxies.
 
-3. Параметры в config.py:
+3. Parameters in config.py:
 
-- MAX_CONCURRENT = 10       - количество потоков
-- UPDATE_DATA_MIN = 15      - интервал обновления данных (мин)
-- UPDATE_HTML_SEC = 60      - интервал обновления HTML (сек)
+- MAX_CONCURRENT = 10       - number of threads
+- UPDATE_DATA_MIN = 15      - data update interval (minutes)
+- UPDATE_HTML_SEC = 60      - HTML refresh interval (seconds)
 
 
-## 🚀 Запуск
+## 🚀 Run
 
 ```bash
 python main.py
 ```
 
 
-## После старта:
+## After starting:
 
-1. При первом запуске начнется сбор данных по кошелькам из Debank с выводом прогресса.
-2. Автоматически откроется results.html — страница браузера с балансами и списками кошельков.
+1. On the first run, the script begins collecting wallet data from Debank and displays progress.
+2. The script will automatically open results.html — a browser page with balances and wallet lists.
 
-⏱ Автообновление
+⏱ Auto-refresh
 
-- HTML-страница обновляется каждые UPDATE_HTML_SEC секунд.
-- Данные с Debank обновляются каждые UPDATE_DATA_MIN минут.
+- The HTML page refreshes every UPDATE_HTML_SEC seconds.
+- Data from Debank refreshes every UPDATE_DATA_MIN minutes.
 
 
-## 🧩 Горячие клавиши
+## 🧩 Hotkeys
  
-Ctrl+C	Завершает все процессы и закрывает Playwright
+Ctrl+C — Stops all processes and closes Playwright.
 
 
-## 📊 Результат
+## 📊 Output
 
-После запуска будет автоматически создан файл results.html с отображением всех кошельков, сетей, токенов и DeFi-проектов, включая их текущий баланс в USD.
+After running, the script will automatically generate a results.html file displaying all wallets, networks, tokens, and DeFi projects, including their current balance in USD.
