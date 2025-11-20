@@ -116,7 +116,7 @@ async def get_balance_chains_tokens(page, address: str) -> Tuple[Optional[float]
                 
                 break
             except Exception as e:
-                tqdm.write(f"⚠️ Ошибка при парсинге сетей:", e)
+                tqdm.write(f"⚠️ Error parsing networks:", e)
                 asyncio.sleep(5)
                 continue
 
@@ -168,7 +168,7 @@ async def get_balance_chains_tokens(page, address: str) -> Tuple[Optional[float]
                 
                 break
             except Exception as e:
-                tqdm.write(f"⚠️ Ошибка при парсинге токенов:", e)
+                tqdm.write(f"⚠️ Error parsing tokens:", e)
                 asyncio.sleep(5)
                 continue                
 
@@ -265,11 +265,11 @@ async def get_balance_chains_tokens(page, address: str) -> Tuple[Optional[float]
                             chains_result[full_chain_name]["total"] += total_usd
 
                         except Exception as e:
-                            print("⚠️ Ошибка парсинга протокола:", e)
+                            print("⚠️ Protocol parsing error:", e)
             
                 break
             except Exception as e:
-                tqdm.write(f"⚠️ Ошибка при парсинге протоколов:", e)
+                tqdm.write(f"⚠️ Protocol parsing error:", e)
                 asyncio.sleep(5)
                 continue                 
 
@@ -359,13 +359,13 @@ async def process_address(playwright, browser_type, address: str, semaphore: asy
                             ensure_ascii=False,
                             indent=2
                         )
-                    tqdm.write(f"✓ [{address}] Данные успешно получены из Debank")
+                    tqdm.write(f"✓ [{address}] Data successfully retrieved from Debank")
                     return None
 
                 except Exception as e:
                     last_exc = e
                     tqdm.write(
-                        f"⚠️ [{address}] Ошибка получения данных: {e}, пробуем еще раз..."
+                        f"⚠️ [{address}] Data retrieval error: {e}, retrying..."
                     )
 
         # 🔹 Иначе работаем через прокси
@@ -375,7 +375,7 @@ async def process_address(playwright, browser_type, address: str, semaphore: asy
 
         while True:
             if "shutdown_flag" in globals() and shutdown_flag.is_set():
-                tqdm.write(f"🛑 [{address}] Остановка по сигналу завершения.")
+                tqdm.write(f"🛑 [{address}] Stopping due to termination signal.")
                 return f"[{address}] cancelled"
 
             proxy_cfg = parse_proxy_line(proxies[(start_idx + proxy_attempt) % total])
@@ -394,20 +394,20 @@ async def process_address(playwright, browser_type, address: str, semaphore: asy
                             indent=2
                         )
 
-                    tqdm.write(f"✓ [{address}] Данные успешно получены из Debank | {proxy_cfg.get('server')}")
+                    tqdm.write(f"✓ [{address}] Data successfully retrieved from Debank | {proxy_cfg.get('server')}")
                     return None
 
                 except Exception as e:
                     last_exc = e
                     tqdm.write(
-                        f"⚠️ [{address}] Попытка {attempt+1}/{ATTEMPTS_PER_PROXY} через {proxy_cfg.get('server')} не удалась: {e}"
+                        f"⚠️ [{address}] Attempt {attempt+1}/{ATTEMPTS_PER_PROXY} via {proxy_cfg.get('server')} failed: {e}"
                     )
                     await asyncio.sleep(0.5)
 
             proxy_attempt += 1
             if proxy_attempt >= total:
                 proxy_attempt = 0
-                tqdm.write(f"🔁 [{address}] Все прокси пройдены, начинаем новый круг... (последняя ошибка: {last_exc})")
+                tqdm.write(f"🔁 [{address}] All proxies have been tried, starting a new round... (last error: {last_exc})")
                 await asyncio.sleep(2.0)
 
 
@@ -439,7 +439,7 @@ def generate_html(storage_dir: str = "storage", output_file: str = "results.html
                 all_data[addr] = d
                 total_balance += d["balance"]
             except Exception as e:
-                print(f"⚠️ Ошибка чтения {fname}: {e}")
+                print(f"⚠️ Read error {fname}: {e}")
 
     # Порядок кошельков по балансу (убывание)
     wallet_order = [addr for addr, _ in sorted(all_data.items(), key=lambda kv: kv[1].get("balance", 0.0), reverse=True)]
@@ -472,7 +472,7 @@ async def auto_generate_html(interval_sec: int = 5):
             generate_html()
             # print(f"🪄 [{datetime.now().strftime('%H:%M:%S')}] HTML обновлён автоматически ({OUTPUT_FILE})")
         except Exception as e:
-            print(f"⚠️ Ошибка при автообновлении HTML: {e}")
+            print(f"⚠️ Error during HTML auto-refresh: {e}")
         await asyncio.sleep(interval_sec)
 
 
@@ -496,7 +496,7 @@ def handle_exit(sig, frame):
 
 async def shutdown_all_tasks():
     """Принудительно завершает все активные asyncio-задачи"""
-    print("🛑 Отмена всех задач...")
+    print("🛑 Cancelling all tasks...")
     for task in asyncio.all_tasks():
         if task is not asyncio.current_task():
             task.cancel()
@@ -522,7 +522,7 @@ async def main():
         else:
             max_concurrent = MAX_CONCURRENT
 
-    print(f"🚀 Запуск обновления данных из Debank (количество потоков: {max_concurrent})")
+    print(f"🚀 Starting data update from Debank (number of threads: {max_concurrent})")
     semaphore = asyncio.Semaphore(max_concurrent)
     
     output_file_already_opened = False
@@ -537,14 +537,14 @@ async def main():
 
         try:
             while not shutdown_flag.is_set():
-                print(f"\n🔄 [{datetime.now().strftime('%H:%M:%S')}] Начато обновление данных...")
+                print(f"\n🔄 [{datetime.now().strftime('%H:%M:%S')}] Data update started...")
 
                 tasks = [
                     asyncio.create_task(process_address(p, browser_type, addr, semaphore, proxy_rotator))
                     for addr in addresses
                 ]
                 
-                for f in tqdm_asyncio.as_completed(tasks, desc="Обновление данных", total=len(tasks)):
+                for f in tqdm_asyncio.as_completed(tasks, desc="Updating data", total=len(tasks)):
                     err = await f
                     if err:
                         tqdm.write(f"⚠️ {err}")
@@ -554,7 +554,7 @@ async def main():
                     webbrowser.open(f"file://{output_path}")
                     output_file_already_opened = True
 
-                print(f"✅ [{datetime.now().strftime('%H:%M:%S')}] Данные обновлёны после полного цикла")
+                print(f"✅ [{datetime.now().strftime('%H:%M:%S')}] Data updated after a full cycle")
 
                 update_data_sec = int(UPDATE_DATA_MIN * 60)
                 for remaining in range(update_data_sec, -1, -1):
@@ -563,15 +563,15 @@ async def main():
                     try:
                         mins, secs = divmod(remaining, 60)
                         time_str = f"{mins:02d}:{secs:02d}"
-                        print(f"\r⏳ Ожидание следующего обновления данных через: {time_str}", end="", flush=True)
+                        print(f"\r⏳ Waiting for the next data update in: {time_str}", end="", flush=True)
                         await asyncio.sleep(1)
                     except asyncio.CancelledError:
                         break
 
         except asyncio.CancelledError:
-            print("\n⚠️ Цикл обновления данных прерван (Ctrl+C).")
+            print("\n⚠️ Data update cycle interrupted (Ctrl+C).")
 
-    print("\n🧹 Завершение Playwright и выход...")
+    print("\n🧹 Playwright termination and exit...")
     await asyncio.sleep(0.1)
 
 
@@ -582,5 +582,5 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n🛑 Принудительное завершение программы.")
+        print("\n🛑 Forced program termination.")
         sys.exit(0)
