@@ -6,6 +6,8 @@
 
 The script automatically collects wallet data from Debank and outputs the results to an HTML page.
 
+<p align="center"><img src="images/panel_img.png"></p>
+
 Supports:
 - Asynchronous multi-threaded parsing 🧩
 - Proxy support 🌍
