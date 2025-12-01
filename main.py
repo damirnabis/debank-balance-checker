@@ -22,13 +22,60 @@ STORAGE_DIR = "storage"
 CHAIN_MAP_PATH = f"{STORAGE_DIR}/CHAIN_NAME_MAP.json"
 
 
+def detect_address_type(address: str) -> str:
+    if not isinstance(address, str):
+        return "invalid"
+
+    addr = address.strip()
+
+    if addr.startswith("0x") and len(addr) == 42:
+        if re.fullmatch(r"0x[a-fA-F0-9]{40}", addr):
+            return "evm"   
+    else:
+            return "solana"
+
+
 # ======================
-# Парсинг Debank
+# Работа c прокси
+# ======================
+
+
+class ProxyRotator:
+    def __init__(self, proxies: list[str]):
+        self._proxies = proxies
+        self._lock = asyncio.Lock()
+        self._idx = 0
+
+    async def get_next_proxy(self) -> dict:
+        async with self._lock:
+            if not self._proxies:
+                raise RuntimeError("No proxies available")
+            proxy = parse_proxy_line(self._proxies[self._idx])
+            self._idx = (self._idx + 1) % len(self._proxies)
+            return proxy
+
+
+def parse_proxy_line(line: str) -> dict:
+    line = line.strip()
+    if not line:
+        raise ValueError("Empty proxy line")
+    if "@" not in line:
+        raise ValueError(f"Incorrect proxy format: {line}")
+    auth, hostport = line.split("@", 1)
+    if ":" not in auth or ":" not in hostport:
+        raise ValueError(f"Incorrect proxy format: {line}")
+    username, password = auth.split(":", 1)
+    domain, port = hostport.split(":", 1)
+    server = f"http://{domain}:{port}"
+    return {"server": server, "username": username, "password": password}
+
+
+# ======================
+# Парсинг Debank, Zerion
 # ======================
 
 
 def load_chain_name_map() -> dict[str, str]:
-    """Загружает или создаёт файл с маппингом chain_id -> full_name"""
     os.makedirs("storage", exist_ok=True)
     if os.path.exists(CHAIN_MAP_PATH):
         try:
@@ -40,15 +87,112 @@ def load_chain_name_map() -> dict[str, str]:
 
 
 def save_chain_name_map(mapping: dict[str, str]):
-    """Сохраняет маппинг chain_id -> full_name"""
     os.makedirs("storage", exist_ok=True)
     with open(CHAIN_MAP_PATH, "w", encoding="utf-8") as f:
         json.dump(mapping, f, ensure_ascii=False, indent=2)
 
 
-async def get_balance_chains_tokens(page, address: str) -> Tuple[Optional[float], dict]:
-    """Парсит общий баланс, сети и токены с логотипами"""
+async def process_address(playwright, browser_type, address: str, semaphore: asyncio.Semaphore, proxy_rotator: ProxyRotator):
+    async with semaphore:
+        last_exc = None
+        proxies = proxy_rotator._proxies
+        total = len(proxies)
 
+        # Если нет прокси — работаем напрямую (без прокси)
+        if total == 0:
+            while True:
+                await asyncio.sleep(random.uniform(1.2, 3.5))
+                try:
+                    bal, chains = await get_wallet_data(playwright, browser_type, address, None)
+
+                    os.makedirs(STORAGE_DIR, exist_ok=True)
+                    with open(os.path.join(STORAGE_DIR, f"{address}.json"), "w", encoding="utf-8") as f:
+                        json.dump(
+                            {"address": address, "balance": bal, "chains": chains},
+                            f,
+                            ensure_ascii=False,
+                            indent=2
+                        )
+                    tqdm.write(f"✓ [{address}] Data successfully retrieved!")
+                    return None
+
+                except Exception as e:
+                    last_exc = e
+                    tqdm.write(
+                        f"⚠️ [{address}] Data retrieval error: {e}, retrying..."
+                    )
+
+        # Иначе работаем через прокси
+        await asyncio.sleep(random.uniform(0.1, 1.0))
+        start_idx = random.randint(0, total - 1)
+        proxy_attempt = 0
+
+        while True:
+            if "shutdown_flag" in globals() and shutdown_flag.is_set():
+                tqdm.write(f"🛑 [{address}] Stopping due to termination signal.")
+                return f"[{address}] cancelled"
+
+            proxy_cfg = parse_proxy_line(proxies[(start_idx + proxy_attempt) % total])
+
+            for attempt in range(ATTEMPTS_PER_PROXY):
+                try:
+                    bal, chains = await get_wallet_data(playwright, browser_type, address, proxy_cfg)
+
+                    # сохраняем результат
+                    os.makedirs(STORAGE_DIR, exist_ok=True)
+                    with open(os.path.join(STORAGE_DIR, f"{address}.json"), "w", encoding="utf-8") as f:
+                        json.dump(
+                            {"address": address, "balance": bal, "chains": chains},
+                            f,
+                            ensure_ascii=False,
+                            indent=2
+                        )
+
+                    tqdm.write(f"✓ [{address}] Data successfully retrieved! | {proxy_cfg.get('server')}")
+                    return None
+
+                except Exception as e:
+                    last_exc = e
+                    tqdm.write(
+                        f"⚠️ [{address}] Attempt {attempt+1}/{ATTEMPTS_PER_PROXY} via {proxy_cfg.get('server')} failed: {e}"
+                    )
+                    await asyncio.sleep(0.5)
+
+            proxy_attempt += 1
+            if proxy_attempt >= total:
+                proxy_attempt = 0
+                tqdm.write(f"🔁 [{address}] All proxies have been tried, starting a new round... (last error: {last_exc})")
+                await asyncio.sleep(2.0)
+
+
+async def get_wallet_data(playwright, browser_type, address: str, proxy_cfg: dict) -> Tuple[Optional[float], dict]:
+    browser = await browser_type.launch(headless=True)
+    try:
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0 Safari/537.36"
+            ),
+            viewport={"width": 1400, "height": 900}
+        )
+        page = await context.new_page()
+        try:
+            address_type = detect_address_type(address)
+            if address_type == 'evm':
+                bal, chains = await get_evm_data(page, address)
+            else:
+                bal, chains = await get_solana_data(page, address)
+            return bal, chains
+        finally:
+            if not page.is_closed():
+                await page.close()
+            await context.close()
+    finally:
+        await browser.close()
+
+
+async def get_evm_data(page, address: str) -> Tuple[Optional[float], dict]:
     url = f"https://debank.com/profile/{address}"
     chains_result: dict[str, dict] = {}
     total_balance: Optional[float] = None
@@ -287,128 +431,58 @@ async def get_balance_chains_tokens(page, address: str) -> Tuple[Optional[float]
         #tqdm.write(f"❌ Ошибка при парсинге [{address}]: {e}")
 
 
-# ======================
-# Работа через прокси
-# ======================
+async def get_solana_data(page, address: str) -> Tuple[Optional[float], dict]:
+    url = f"https://app.zerion.io/{address}/overview/wallet"
+    chains_result: dict[str, dict] = {'Solana':{'logo_url':'https://cdn.zerion.io/11111111111111111111111111111111.png', 'tokens':{}}}
+    total_balance: Optional[float] = 0
 
+    await page.goto(url, timeout=25000)
+    bal_el = await page.wait_for_selector("div.sc-dkzDqf.sc-BeQoi.eyABon.fboqB", timeout=25000)
+    bal = float((await bal_el.inner_text()).replace(",", "").replace('\xa0', "").replace('$', ""))
+    if bal <= 0:
+        return total_balance, {}
+    await page.wait_for_selector("div._position_li2lw_1", timeout=25000)
+    elements = await page.query_selector_all("div._position_li2lw_1")
 
-def parse_proxy_line(line: str) -> dict:
-    line = line.strip()
-    if not line:
-        raise ValueError("Empty proxy line")
-    if "@" not in line:
-        raise ValueError(f"Неверный формат прокси: {line}")
-    auth, hostport = line.split("@", 1)
-    if ":" not in auth or ":" not in hostport:
-        raise ValueError(f"Неверный формат прокси: {line}")
-    username, password = auth.split(":", 1)
-    domain, port = hostport.split(":", 1)
-    server = f"http://{domain}:{port}"  # если нужна socks5 — замените
-    return {"server": server, "username": username, "password": password}
+    for el in elements:
+        img_el = await el.query_selector("div.sc-cCsOjp img")
+        logo_url = await img_el.get_attribute("src") if img_el else None
 
+        amount_els = await el.query_selector_all("div.sc-dkzDqf.hCtMZk._ellipsisText_li2lw_68")
+        amount_el = amount_els[1]
+        amount_text = (await amount_el.inner_text()).strip() if amount_el else None
+        balance = None
+        symbol = None
+        if amount_text:
+            try:
+                parts = amount_text.replace(",", ".").split('\xa0')
+                if len(parts) > 2:
+                    balance = float(parts[0]+parts[1])                       
+                    symbol = parts[2]
+                else:
+                    balance = float(parts[0])                       
+                    symbol = parts[1]
+            except:
+                pass
 
-async def try_with_proxy(playwright, browser_type, address: str, proxy_cfg: dict) -> Tuple[Optional[float], dict]:
-    browser = await browser_type.launch(headless=True)
-    try:
-        context = await browser.new_context(proxy=proxy_cfg, viewport={"width": 1200, "height": 800})
-        page = await context.new_page()
-        try:
-            bal, chains = await get_balance_chains_tokens(page, address)
-            return bal, chains
-        finally:
-            if not page.is_closed():
-                await page.close()
-            await context.close()
-    finally:
-        await browser.close()
+        value_el = await el.query_selector("div.sc-jqUVSM.hgTlcd")
+        value_text = (await value_el.inner_text()).strip() if value_el else None
+        value_usd = None
+        if value_text:
+            try:
+                value_usd = float(value_text.replace("$", "").replace(",", ".").replace("\xa0", ""))
+            except:
+                pass
 
-
-class ProxyRotator:
-    def __init__(self, proxies: list[str]):
-        self._proxies = proxies
-        self._lock = asyncio.Lock()
-        self._idx = 0
-
-    async def get_next_proxy(self) -> dict:
-        async with self._lock:
-            if not self._proxies:
-                raise RuntimeError("No proxies available")
-            proxy = parse_proxy_line(self._proxies[self._idx])
-            self._idx = (self._idx + 1) % len(self._proxies)
-            return proxy
-
-
-async def process_address(playwright, browser_type, address: str, semaphore: asyncio.Semaphore, proxy_rotator: ProxyRotator):
-    async with semaphore:
-        last_exc = None
-        proxies = proxy_rotator._proxies
-        total = len(proxies)
-
-        # 🔹 Если нет прокси — работаем напрямую (без прокси)
-        if total == 0:
-            while True:
-                await asyncio.sleep(random.uniform(1.2, 3.5))
-                try:
-                    bal, chains = await try_with_proxy(playwright, browser_type, address, None)
-
-                    os.makedirs(STORAGE_DIR, exist_ok=True)
-                    with open(os.path.join(STORAGE_DIR, f"{address}.json"), "w", encoding="utf-8") as f:
-                        json.dump(
-                            {"address": address, "balance": bal, "chains": chains},
-                            f,
-                            ensure_ascii=False,
-                            indent=2
-                        )
-                    tqdm.write(f"✓ [{address}] Data successfully retrieved from Debank")
-                    return None
-
-                except Exception as e:
-                    last_exc = e
-                    tqdm.write(
-                        f"⚠️ [{address}] Data retrieval error: {e}, retrying..."
-                    )
-
-        # 🔹 Иначе работаем через прокси
-        await asyncio.sleep(random.uniform(0.1, 1.0))
-        start_idx = random.randint(0, total - 1)
-        proxy_attempt = 0
-
-        while True:
-            if "shutdown_flag" in globals() and shutdown_flag.is_set():
-                tqdm.write(f"🛑 [{address}] Stopping due to termination signal.")
-                return f"[{address}] cancelled"
-
-            proxy_cfg = parse_proxy_line(proxies[(start_idx + proxy_attempt) % total])
-
-            for attempt in range(ATTEMPTS_PER_PROXY):
-                try:
-                    bal, chains = await try_with_proxy(playwright, browser_type, address, proxy_cfg)
-
-                    # 💾 сохраняем результат
-                    os.makedirs(STORAGE_DIR, exist_ok=True)
-                    with open(os.path.join(STORAGE_DIR, f"{address}.json"), "w", encoding="utf-8") as f:
-                        json.dump(
-                            {"address": address, "balance": bal, "chains": chains},
-                            f,
-                            ensure_ascii=False,
-                            indent=2
-                        )
-
-                    tqdm.write(f"✓ [{address}] Data successfully retrieved from Debank | {proxy_cfg.get('server')}")
-                    return None
-
-                except Exception as e:
-                    last_exc = e
-                    tqdm.write(
-                        f"⚠️ [{address}] Attempt {attempt+1}/{ATTEMPTS_PER_PROXY} via {proxy_cfg.get('server')} failed: {e}"
-                    )
-                    await asyncio.sleep(0.5)
-
-            proxy_attempt += 1
-            if proxy_attempt >= total:
-                proxy_attempt = 0
-                tqdm.write(f"🔁 [{address}] All proxies have been tried, starting a new round... (last error: {last_exc})")
-                await asyncio.sleep(2.0)
+        chains_result["Solana"]["tokens"][symbol] = {
+                        "amount": balance,
+                        "usd": value_usd,
+                        "logo_url": logo_url
+                    }
+        
+        total_balance += value_usd
+       
+    return total_balance, chains_result
 
 
 # ======================
@@ -466,7 +540,7 @@ def generate_html(storage_dir: str = "storage", output_file: str = "results.html
 
 
 async def auto_generate_html(interval_sec: int = 5):
-    """Фоновое обновление HTML независимо от обновления данных"""
+    # Фоновое обновление HTML независимо от обновления данных
     while True:
         try:
             generate_html()
@@ -485,7 +559,7 @@ shutdown_flag = asyncio.Event()
 
 
 def handle_exit(sig, frame):
-    """Ctrl+C: завершает все процессы"""
+    # Ctrl+C: завершает все процессы
     shutdown_flag.set()
     try:
         loop = asyncio.get_event_loop()
@@ -495,7 +569,7 @@ def handle_exit(sig, frame):
 
 
 async def shutdown_all_tasks():
-    """Принудительно завершает все активные asyncio-задачи"""
+    # Принудительно завершает все активные asyncio-задачи
     print("🛑 Cancelling all tasks...")
     for task in asyncio.all_tasks():
         if task is not asyncio.current_task():
@@ -504,7 +578,8 @@ async def shutdown_all_tasks():
 
 
 async def main():
-    # 🔹 Загружаем адреса и прокси
+    
+    # Загружаем адреса и прокси
     with open(ADDRESSES_FILE, "r", encoding="utf-8") as f:
         addresses = [line.strip() for line in f if line.strip()]
     with open(PROXIES_FILE, "r", encoding="utf-8") as f:
@@ -522,7 +597,7 @@ async def main():
         else:
             max_concurrent = MAX_CONCURRENT
 
-    print(f"🚀 Starting data update from Debank (number of threads: {max_concurrent})")
+    print(f"🚀 Starting data updating (number of threads: {max_concurrent})")
     semaphore = asyncio.Semaphore(max_concurrent)
     
     output_file_already_opened = False
@@ -576,6 +651,7 @@ async def main():
 
 
 if __name__ == "__main__":
+    
     signal.signal(signal.SIGINT, handle_exit)
     signal.signal(signal.SIGTERM, handle_exit)
 

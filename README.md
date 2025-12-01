@@ -2,11 +2,9 @@
 [![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md)
 [![Русский](https://img.shields.io/badge/язык-Русский-red.svg)](README.ru.md)
 
-# 💰 Debank balance checker
+# 💰 Debank balance checker (EVM/Solana)
 
 The script automatically collects wallet data from Debank and outputs the results to an HTML page.
-
-<p align="center"><img src="images/panel_img.png"></p>
 
 Supports:
 - Asynchronous multi-threaded parsing 🧩
@@ -50,7 +48,7 @@ playwright install
 
 ## ⚙️ Configuration
 
-1. Fill the file data/addresses.txt with wallet public addresses.
+1. Fill the file data/addresses.txt with EVM and/or Solana wallet public addresses.
 
 2. Optional: to run the script in multiple threads, fill data/proxies.txt with proxies.
 
