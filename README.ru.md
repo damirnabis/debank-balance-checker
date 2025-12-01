@@ -2,7 +2,7 @@
 [![English](https://img.shields.io/badge/lang-English-blue.svg)](README.md)
 [![Русский](https://img.shields.io/badge/язык-Русский-red.svg)](README.ru.md)
 
-# 💰 Debank balance checker (EVM/Solana)
+# 💰 Debank balance checker (EVM, Solana)
 
 Скрипт автоматически собирает данные о кошельках из Debank и выводит результат в HTML-страницу.
 
